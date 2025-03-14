@@ -1,0 +1,43 @@
+# Rust specific ignores
+/target/
+**/*.rs.bk
+Cargo.lock
+*.pdb
+
+# Generated files
+.rustc_info.json
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables and secrets
+.env
+.env.local
+*.secret
+
+# Redis data files
+dump.rdb
+appendonly.aof
+*.rdb
+*.aof
+
+# Log files
+*.log
+logs/
+
+# For those using rust-analyzer
+rust-analyzer.json
+
+# Test files and directories
+test_output/
