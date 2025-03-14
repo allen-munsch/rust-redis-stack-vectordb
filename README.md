@@ -1,8 +1,10 @@
 # Redis Vector Store
 
-A Rust implementation of a vector store using Redis for high-performance vector similarity search and storage, with a convenient driver interface for use in other applications.
+A Rust implementation of a vector store using Redis for high-performance distributed vector similarity search and storage, with a convenient driver interface for use in other applications.
 
-With QdrantDB data compatibility.
+Embeddings cold storage, and embeddings hot reloading.
+
+- Related: https://redis.io/blog/benchmarking-results-for-vector-databases/
 
 ## Features
 
@@ -14,6 +16,8 @@ With QdrantDB data compatibility.
 - Easy-to-use driver interface for integration with other libraries
 - Google embedding API integration (placeholder implementation)
 - Built-in Redis Stack compatibility
+- Redis Insight
+- QdrantDB data compatibility
 
 ## Requirements
 
