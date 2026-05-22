@@ -1,52 +1,15 @@
-use redis::RedisError;
-use std::error::Error;
-use std::fmt;
+use thiserror::Error;
 
-/// Custom error type for the vector store
-#[derive(Debug)]
+#[derive(Error, Debug)]
 pub enum VectorStoreError {
-    /// Errors from the Redis client
-    RedisError(RedisError),
-    /// Errors from JSON serialization/deserialization
-    SerializationError(String),
-    /// Errors from JSON deserialization
-    DeserializationError(String),
-    /// Errors from GCS operations
-    GcsError(String),
-    /// Other general errors
+    #[error("Redis error: {0}")]
+    Redis(#[from] redis::RedisError),
+
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
+    #[error("{0}")]
     Other(String),
-}
-
-impl fmt::Display for VectorStoreError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            VectorStoreError::RedisError(e) => write!(f, "Redis error: {}", e),
-            VectorStoreError::SerializationError(e) => write!(f, "Serialization error: {}", e),
-            VectorStoreError::DeserializationError(e) => write!(f, "Deserialization error: {}", e),
-            VectorStoreError::GcsError(e) => write!(f, "GCS error: {}", e),
-            VectorStoreError::Other(e) => write!(f, "Error: {}", e),
-        }
-    }
-}
-
-impl Error for VectorStoreError {}
-
-impl From<RedisError> for VectorStoreError {
-    fn from(err: RedisError) -> Self {
-        VectorStoreError::RedisError(err)
-    }
-}
-
-impl From<serde_json::Error> for VectorStoreError {
-    fn from(err: serde_json::Error) -> Self {
-        VectorStoreError::SerializationError(err.to_string())
-    }
-}
-
-impl From<std::io::Error> for VectorStoreError {
-    fn from(err: std::io::Error) -> Self {
-        VectorStoreError::Other(err.to_string())
-    }
 }
 
 impl From<String> for VectorStoreError {

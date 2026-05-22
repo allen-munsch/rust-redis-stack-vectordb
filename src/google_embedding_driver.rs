@@ -1,75 +1,58 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
-use crate::redis_vector_store_driver::{EmbeddingDriver};
+use crate::redis_vector_store_driver::EmbeddingDriver;
 use crate::error::VectorStoreError;
 
-// Simple mock HTTP client for our example
-struct Client;
-
-impl Client {
-    fn new() -> Self {
-        Client
-    }
-    
-    // Just a stub for building a client
-    fn builder() -> ClientBuilder {
-        ClientBuilder
-    }
-}
-
-// Simple mock client builder
-struct ClientBuilder;
-
-impl ClientBuilder {
-    fn timeout(self, _duration: Duration) -> Self {
-        self
-    }
-    
-    fn build(self) -> Result<Client, VectorStoreError> {
-        Ok(Client::new())
-    }
-}
-
-/// Google Embedding Driver for generating embeddings using Google's API
+/// Google Generative Language API embedding driver.
+///
+/// Uses the `models/text-embedding-004` endpoint (or any compatible model).
+/// Falls back to a deterministic pseudo-embedding when no API key is provided,
+/// which is useful for testing but NOT suitable for production.
 pub struct GoogleEmbeddingDriver {
-    /// Model name to use for embeddings
     model: String,
-    
-    /// Mock HTTP client for API requests
-    _client: Client,
-    
-    /// API key for authentication
     api_key: Option<String>,
+    client: reqwest::Client,
 }
 
 #[derive(Serialize)]
 struct EmbeddingRequest {
+    content: EmbeddingContent,
+}
+
+#[derive(Serialize)]
+struct EmbeddingContent {
+    parts: Vec<EmbeddingPart>,
+}
+
+#[derive(Serialize)]
+struct EmbeddingPart {
     text: String,
 }
 
 #[derive(Deserialize)]
 struct EmbeddingResponse {
-    embedding: Vec<f64>,
+    embedding: Option<EmbeddingValues>,
+}
+
+#[derive(Deserialize)]
+struct EmbeddingValues {
+    values: Vec<f64>,
 }
 
 impl GoogleEmbeddingDriver {
-    /// Create a new Google Embedding Driver
+    /// Create a new Google Embedding Driver.
+    ///
+    /// `model` should be the full model path, e.g. `"models/text-embedding-004"`.
+    /// `api_key` is optional — if not set, the driver produces deterministic pseudo-embeddings.
     pub fn new(model: &str, api_key: Option<&str>) -> Self {
-        let client = Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .unwrap_or_else(|_| Client::new());
-            
         Self {
             model: model.to_string(),
-            _client: client,
             api_key: api_key.map(String::from),
+            client: reqwest::Client::new(),
         }
     }
-    
-    /// Get the model name
+
     pub fn model(&self) -> &str {
         &self.model
     }
@@ -78,50 +61,70 @@ impl GoogleEmbeddingDriver {
 #[async_trait]
 impl EmbeddingDriver for GoogleEmbeddingDriver {
     async fn embed_string(&self, text: &str) -> Result<Vec<f64>, VectorStoreError> {
-        // This is a placeholder implementation
-        // In a real implementation, you would make an API call to Google's embedding service
-        
-        // Create a mock embedding request (not actually used in this stub implementation)
-        let _request = EmbeddingRequest {
-            text: text.to_string(),
+        let api_key = match &self.api_key {
+            Some(key) => key.clone(),
+            None => {
+                return Ok(deterministic_fallback(text, 768));
+            }
         };
-        
-        // In a real implementation, this would be an API call
-        /*
-        let url = format!("https://api.google.com/v1/{}/embeddings", self.model);
-        
-        let mut request_builder = self.client.post(&url)
-            .json(&request);
-            
-        if let Some(api_key) = &self.api_key {
-            request_builder = request_builder.header("Authorization", format!("Bearer {}", api_key));
-        }
-        
-        let response = request_builder.send().await
+
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/{}:embedContent?key={}",
+            self.model, api_key
+        );
+
+        let request_body = EmbeddingRequest {
+            content: EmbeddingContent {
+                parts: vec![EmbeddingPart {
+                    text: text.to_string(),
+                }],
+            },
+        };
+
+        let response = self.client
+            .post(&url)
+            .json(&request_body)
+            .send()
+            .await
             .map_err(|e| VectorStoreError::Other(format!("API request failed: {}", e)))?;
-            
-        let embedding_response: EmbeddingResponse = response.json().await
-            .map_err(|e| VectorStoreError::DeserializationError(format!("Failed to parse API response: {}", e)))?;
-            
-        Ok(embedding_response.embedding)
-        */
-        
-        // Generate a mock embedding based on the text length
-        // This is just a placeholder - in a real implementation, you would use the actual API
-        let seed = text.len() as f64 / 100.0;
-        let dimensions = 768;
-        let mut mock_embedding = Vec::with_capacity(dimensions);
-        
-        for i in 0..dimensions {
-            let value = (i as f64 * seed).sin() * 0.5 + 0.5;
-            mock_embedding.push(value);
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(VectorStoreError::Other(format!(
+                "API error {}: {}",
+                status, body
+            )));
         }
-        
-        Ok(mock_embedding)
+
+        let embedding_response: EmbeddingResponse = response
+            .json()
+            .await
+            .map_err(|e| VectorStoreError::Other(format!(
+                "Failed to parse API response: {}", e
+            )))?;
+
+        embedding_response
+            .embedding
+            .map(|e| e.values)
+            .ok_or_else(|| VectorStoreError::Other("API response missing embedding".to_string()))
     }
 }
 
-/// Helper function to create a new Google Embedding Driver
+/// Deterministic fallback embedding for testing without an API key.
+fn deterministic_fallback(text: &str, dim: usize) -> Vec<f64> {
+    let mut vec = Vec::with_capacity(dim);
+    let bytes = text.as_bytes();
+    for i in 0..dim {
+        let idx = i % bytes.len().max(1);
+        let seed = bytes[idx] as f64 / 255.0;
+        let phase = (i as f64 * 0.0174533) + (seed * std::f64::consts::PI);
+        vec.push(phase.sin() * 0.5 + 0.5);
+    }
+    vec
+}
+
+/// Create a Google Embedding Driver with the given model and optional API key.
 pub fn get_embedding_driver(model: &str, api_key: Option<&str>) -> GoogleEmbeddingDriver {
     GoogleEmbeddingDriver::new(model, api_key)
 }

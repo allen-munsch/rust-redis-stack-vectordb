@@ -1,22 +1,29 @@
 use std::env;
 
-/// Redis configuration structure that holds connection details
+/// Redis connection configuration.
+///
+/// Construct via `RedisConfig::from_env()` for the standard workflow,
+/// or `RedisConfig::new()` for programmatic setup.
 #[derive(Clone, Debug)]
 pub struct RedisConfig {
+    /// Full Redis connection URL (e.g. `redis://localhost:6379`).
     pub url: String,
+    /// Redis hostname.
     pub hostname: String,
+    /// Redis port.
     pub port: u16,
+    /// Optional password for AUTH.
     pub password: Option<String>,
 }
 
 impl RedisConfig {
-    /// Create a new Redis configuration with the given parameters
+    /// Create a new configuration with explicit parameters.
     pub fn new(hostname: &str, port: u16, password: Option<&str>) -> Self {
         let url = match &password {
             Some(pass) => format!("redis://:{}@{}:{}", pass, hostname, port),
             None => format!("redis://{}:{}", hostname, port),
         };
-        
+
         RedisConfig {
             url,
             hostname: hostname.to_string(),
@@ -24,8 +31,11 @@ impl RedisConfig {
             password: password.map(String::from),
         }
     }
-    
-    /// Create a Redis configuration from environment variables
+
+    /// Load configuration from environment variables:
+    /// - `REDIS_HOSTNAME` (default: `localhost`)
+    /// - `REDIS_PORT` (default: `6379`)
+    /// - `REDIS_PASSWORD` (optional)
     pub fn from_env() -> Self {
         let hostname = env::var("REDIS_HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
         let port = env::var("REDIS_PORT")
@@ -33,23 +43,12 @@ impl RedisConfig {
             .parse::<u16>()
             .unwrap_or(6379);
         let password = env::var("REDIS_PASSWORD").ok();
-        
+
         Self::new(&hostname, port, password.as_deref())
     }
-    
-    /// Get the Redis URL formatted for connection
+
+    /// Get the Redis connection URL.
     pub fn get_url(&self) -> &str {
         &self.url
     }
-}
-
-/// Utility function to get Redis configuration from environment
-pub fn get_redis_config() -> (String, String, u16, Option<String>) {
-    let config = RedisConfig::from_env();
-    (
-        config.url,
-        config.hostname,
-        config.port,
-        config.password,
-    )
 }

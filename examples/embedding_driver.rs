@@ -2,42 +2,36 @@ use std::sync::Arc;
 use redis_vector_store::{
     RedisConfig,
     redis_vector_store_driver::{
-        RedisStackVectorStoreDriver, VectorStoreDriver, get_redis_vector_store_driver
+        VectorStoreDriver, get_redis_vector_store_driver
     },
-    google_embedding_driver::get_embedding_driver
+    google_embedding_driver::get_embedding_driver,
+    delete_collection,
 };
 use serde_json::json;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    env_logger::init();
-    
-    // Get Redis configuration from environment
     let redis_config = RedisConfig::from_env();
-    
-    // Create embedding driver
+    let collection_name = "test_driver_collection";
+
+    let _ = delete_collection(&redis_config, collection_name).await;
+
     let embedding_driver = Arc::new(get_embedding_driver(
-        "models/embedding-001", 
+        "models/text-embedding-004",
         std::env::var("GOOGLE_API_KEY").ok().as_deref()
     ));
-    
-    // Create vector store driver
-    let collection_name = "test_collection";
+
     let vector_store = get_redis_vector_store_driver(
         redis_config.clone(),
         collection_name,
         embedding_driver
     );
-    
+
     println!("Initializing collection...");
     vector_store.initialize().await?;
-    
-    // Example 1: Insert vectors
+
     println!("\nInserting test vectors...");
-    
-    // Insert first vector with metadata
-    let vector1 = vec![0.1, 0.2, 0.3, 0.4]; // In practice, this would be 768 dimensions
+    let vector1: Vec<f64> = (0..768).map(|i| (i as f64 * 0.01).sin()).collect();
     let meta1 = json!({
         "source": "document1.txt",
         "page": 1,
@@ -51,9 +45,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("This is test document 1")
     ).await?;
     println!("Inserted vector 1 with ID: {}", id1);
-    
-    // Insert second vector
-    let vector2 = vec![0.2, 0.3, 0.4, 0.5];
+
+    let vector2: Vec<f64> = (0..768).map(|i| (i as f64 * 0.02).sin()).collect();
     let meta2 = json!({
         "source": "document2.txt",
         "page": 2,
@@ -67,58 +60,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Some("This is test document 2")
     ).await?;
     println!("Inserted vector 2 with ID: {}", id2);
-    
-    // Example 2: Query similar vectors
-    println!("\nQuerying similar vectors...");
-    let query_text = "test document";
+
+    println!("\nQuerying similar vectors (namespace filtered)...");
+    let query_vec: Vec<f64> = (0..768).map(|i| ((i as f64 + 5.0) * 0.01).sin()).collect();
     let results = vector_store.query(
-        query_text,
+        "unused",
         Some(5),
-        true,
+        false,
         Some("test_namespace"),
-        None
+        Some(query_vec.clone())
     ).await?;
-    
-    println!("Found {} results for query: '{}'", results.len(), query_text);
+
+    println!("Found {} results", results.len());
     for (i, result) in results.iter().enumerate() {
-        println!("Result {}: ID={}, Score={}", i+1, result.id, result.score);
-        
-        // Print first few vector components if included
-        if !result.vector.is_empty() {
-            println!("  Vector (first 3 elements): {:?}", &result.vector[0..3.min(result.vector.len())]);
-        }
-        
-        // Get content from metadata if available
+        println!("Result {}: ID={}, Score={:.6}", i + 1, result.id, result.score);
         if let Some(content) = result.meta.get("content").and_then(|c| c.as_str()) {
             println!("  Content: {}", content);
         }
     }
-    
-    // Example 3: Load specific entries
+
+    println!("\nQuerying with wrong namespace (should return empty)...");
+    let results_empty = vector_store.query(
+        "unused",
+        Some(5),
+        false,
+        Some("nonexistent_namespace"),
+        Some(query_vec)
+    ).await?;
+    println!("Found {} results (expected 0)", results_empty.len());
+
     println!("\nLoading specific entries...");
     let entry1 = vector_store.load_entry(&id1, None).await?;
     if let Some(entry) = entry1 {
         println!("Loaded entry with ID: {}", entry.id);
         println!("Vector length: {}", entry.vector.len());
-        println!("Metadata: {}", serde_json::to_string_pretty(&entry.meta)?);
     }
-    
-    // Example 4: Load multiple entries
+
     println!("\nLoading multiple entries...");
     let entries = vector_store.load_entries(None, Some(vec![id1.clone(), id2.clone()])).await?;
     println!("Loaded {} entries", entries.len());
-    
-    // Example 5: Delete a vector
+
     println!("\nDeleting vector...");
     vector_store.delete_vector(&id1).await?;
     println!("Deleted vector with ID: {}", id1);
-    
-    // Try to load the deleted vector
+
     let deleted_entry = vector_store.load_entry(&id1, None).await?;
     if deleted_entry.is_none() {
         println!("Vector {} was successfully deleted", id1);
     }
-    
+
+    delete_collection(&redis_config, collection_name).await?;
+
     println!("\nExample completed successfully!");
     Ok(())
 }
